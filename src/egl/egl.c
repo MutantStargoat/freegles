@@ -22,6 +22,13 @@ struct display {
 	Display *xdpy;
 };
 
+enum { SURF_WINDOW, SURF_PBUFFER, SURF_PIXMAP };
+
+struct surface {
+	int type;
+	XID surf;
+};
+
 
 static int egl_to_glxattr(int attr);
 static int glx_caveat(int c);
@@ -29,11 +36,12 @@ static int glx_transparent_type(int t);
 static unsigned int glx_drawable_bits(int bits);
 
 
-/*static EGLDisplay dpy;*/
+static EGLDisplay dpy;
 static EGLSurface draw_surf, read_surf;
 static EGLContext ctx;
 
 static EGLint eglerr;
+static EGLenum cur_api = EGL_OPENGL_ES_API;
 
 
 EGLint eglGetError(void)
@@ -63,6 +71,7 @@ EGLBoolean eglInitialize(EGLDisplay display, EGLint *major, EGLint *minor)
 			ERR_RETURN(EGL_NOT_INITIALIZED, EGL_FALSE);
 		}
 	}
+	dpy = display;
 
 	*major = 1;
 	*minor = 4;
@@ -228,6 +237,7 @@ EGLBoolean eglChooseConfig(EGLDisplay dpy, const EGLint *attrib_list, EGLConfig 
 	return EGL_TRUE;
 }
 
+/* TODO fix this */
 EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attrib, EGLint *val)
 {
 	int glx_attr = egl_to_glxattr(attrib);
@@ -241,11 +251,269 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attrib, E
 	if(glx_attr == -1)
 		ERR_RETURN(EGL_BAD_ATTRIBUTE, EGL_FALSE);
 
-	if(glXGetFBConfigAttrib(XDPY(dpy), config, egl_to_glxattr(attrib), value) != 0) {
+	if(glXGetFBConfigAttrib(XDPY(dpy), config, egl_to_glxattr(attrib), val) != 0) {
 		return EGL_FALSE;
 	}
 
 	return EGL_TRUE;
+}
+
+EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig cfg, EGLNativeWindowType win, const EGLint *attr_list)
+{
+	struct surface *surf;
+	if(!(surf = malloc(sizeof *surf))) {
+		ERR_RETURN(EGL_BAD_ALLOC, 0);
+	}
+	surf->type = SURF_WINDOW;
+	surf->surf = win;
+
+	return surf;
+}
+
+EGLSurface eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig cfg, const EGLint *attrib_list)
+{
+	abort();	/* TODO */
+	return 0;
+}
+
+EGLSurface eglCreatePixmapSurface(EGLDisplay dpy, EGLConfig cfg, EGLNativePixmapType pixmap, const EGLint *attr_list)
+{
+	abort();	/* TODO */
+	return 0;
+}
+
+EGLBoolean eglDestroySurface(EGLDisplay dpy, EGLSurface surf)
+{
+	if(!dpy)
+		ERR_RETURN(EGL_BAD_DISPLAY, EGL_FALSE);
+	if(!XDPY(dpy))
+		ERR_RETURN(EGL_NOT_INITIALIZED, EGL_FALSE);
+	if(!surf || !((struct surface*)surf)->surf)
+		ERR_RETURN(EGL_BAD_SURFACE, EGL_FALSE);
+
+	free(surf);
+	return EGL_TRUE;
+}
+
+EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface surf, EGLint attr, EGLint *val)
+{
+	abort();
+	return EGL_FALSE;
+}
+
+EGLBoolean eglBindAPI(EGLenum api)
+{
+	switch(api) {
+	case EGL_OPENGL_API:
+	case EGL_OPENGL_ES_API:
+		cur_api = api;
+
+	case EGL_OPENVG_API:
+		return EGL_FALSE;
+
+	default:
+		break;
+	}
+
+	ERR_RETURN(EGL_BAD_PARAMETER, EGL_FALSE);
+}
+
+EGLenum eglQueryAPI(void)
+{
+	return cur_api;
+}
+
+EGLBoolean eglWaitClient(void)
+{
+	glFinish();
+	return EGL_TRUE;
+}
+
+EGLBoolean eglReleaseThread(void)
+{
+	eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+	eglBindAPI(EGL_OPENGL_ES_API);
+	return EGL_TRUE;
+}
+
+EGLSurface eglCreatePbufferFromClientBuffer(EGLDisplay dpy, EGLenum buftype,
+		EGLClientBuffer buffer, EGLConfig config, const EGLint *attrib_list)
+{
+	abort();	/* TODO */
+	return 0;
+}
+
+EGLBoolean eglSurfaceAttrib(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint value)
+{
+	abort();	/* TODO */
+	return EGL_FALSE;
+}
+
+EGLBoolean eglBindTexImage(EGLDisplay dpy, EGLSurface surface, EGLint buffer)
+{
+	abort();	/* TODO */
+	return EGL_FALSE;
+}
+
+EGLBoolean eglReleaseTexImage(EGLDisplay dpy, EGLSurface surface, EGLint buffer)
+{
+	abort();	/* TODO */
+	return EGL_FALSE;
+}
+
+
+EGLBoolean eglSwapInterval(EGLDisplay dpy, EGLint interval)
+{
+	abort();	/* TODO */
+	return EGL_FALSE;
+}
+
+
+EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig cfg, EGLContext share_ctx,
+		const EGLint *attrib_list)
+{
+	XVisualInfo *vis;
+	GLXContext ctx;
+
+	if(!dpy)
+		ERR_RETURN(EGL_BAD_DISPLAY, 0);
+	if(!XDPY(dpy))
+		ERR_RETURN(EGL_NOT_INITIALIZED, 0);
+
+	if(!(vis = glXGetVisualFromFBConfig(XDPY(dpy), *(GLXFBConfig*)cfg))) {
+		ERR_RETURN(EGL_BAD_CONFIG, 0);
+	}
+
+	/* TODO
+	 * setup X error handler to catch and translate:
+	 * - BadMatch -> EGL_BAD_MATCH
+	 * - BadValue -> EGL_BAD_CONFIG
+	 * - GLXBadContext -> EGL_BAD_CONTEXT
+	 * - BadAlloc -> EGL_BAD_ALLOC
+	 */
+	if(!(ctx = glXCreateContext(XDPY(dpy), vis, share_ctx, True))) {
+		ERR_RETURN(EGL_BAD_CONTEXT, 0);
+	}
+
+	XFree(vis);
+	return ctx;
+}
+
+EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
+{
+	if(!dpy)
+		ERR_RETURN(EGL_BAD_DISPLAY, EGL_FALSE);
+	if(!XDPY(dpy))
+		ERR_RETURN(EGL_NOT_INITIALIZED, EGL_FALSE);
+
+	/* TODO catch X error GLXBadContext and return EGL_BAD_CONTEXT */
+	glXDestroyContext(XDPY(dpy), ctx);
+	return EGL_TRUE;
+}
+
+EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext context)
+{
+	if(!dpy)
+		ERR_RETURN(EGL_BAD_DISPLAY, EGL_FALSE);
+	if(!XDPY(dpy))
+		ERR_RETURN(EGL_NOT_INITIALIZED, EGL_FALSE);
+
+	/* TODO X11 err -> EGL error mapping:
+	 * - BadMatch -> EGL_BAD_MATCH
+	 * - BadAccess -> EGL_BAD_ACCESS
+	 * - GLXBadDrawable -> EGL_BAD_SURFACE (?)
+	 * - GLXBadContext -> EGL_BAD_CONTEXT
+	 * - GLXBadCurrentWindow -> EGL_BAD_NATIVE_WINDOW
+	 * - BadAlloc -> EGL_BAD_ALLOC
+	 */
+	if(glXMakeCurrent(XDPY(dpy), ((struct surface*)draw)->surf, context)) {
+		ctx = context;
+		draw_surf = draw;
+		read_surf = read;
+		return EGL_TRUE;
+	}
+	return EGL_FALSE;
+}
+
+EGLContext eglGetCurrentContext(void)
+{
+	return ctx;
+}
+
+EGLSurface eglGetCurrentSurface(EGLint readdraw)
+{
+	switch(readdraw) {
+	case EGL_DRAW:
+		return draw_surf;
+	case EGL_READ:
+		return read_surf;
+	default:
+		break;
+	}
+	return 0;
+}
+
+EGLDisplay eglGetCurrentDisplay(void)
+{
+	return dpy;
+}
+
+EGLBoolean eglQueryContext(EGLDisplay dpy, EGLContext ctx, EGLint attribute, EGLint *value)
+{
+	/* TODO */
+	abort();
+	return EGL_FALSE;
+}
+
+EGLBoolean eglWaitGL(void)
+{
+	/*EGLenum api = eglQueryAPI();
+	EGLBoolean res = eglBindAPI(EGL_OPENGL_ES_API);
+	eglWaitClient();
+	eglBindAPI(api);
+	return res;*/
+
+	glXWaitGL();
+	return EGL_TRUE;
+}
+
+EGLBoolean eglWaitNative(EGLint engine)
+{
+	if(engine != EGL_CORE_NATIVE_ENGINE) {
+		ERR_RETURN(EGL_BAD_PARAMETER, EGL_FALSE);
+	}
+
+	/* TODO X errors:
+	 * - GLXBadCurrentWindow -> EGL_BAD_CURRENT_SURFACE
+	 */
+	glXWaitX();
+	return EGL_TRUE;
+}
+
+EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
+{
+	if(!dpy)
+		ERR_RETURN(EGL_BAD_DISPLAY, EGL_FALSE);
+	if(!XDPY(dpy))
+		ERR_RETURN(EGL_NOT_INITIALIZED, EGL_FALSE);
+
+	/* TODO X errors:
+	 * - GLXBadDrawable -> EGL_BAD_SURFACE
+	 * - GLXBadCurrentWindow -> EGL_BAD_SURFACE
+	 */
+	glXSwapBuffers(XDPY(dpy), ((struct surface*)surface)->surf);
+	return EGL_TRUE;
+}
+
+EGLBoolean eglCopyBuffers(EGLDisplay dpy, EGLSurface surface, EGLNativePixmapType target)
+{
+	abort();
+	return EGL_FALSE;
+}
+
+__eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procname)
+{
+	return glXGetProcAddress((const unsigned char*)procname);
 }
 
 static int egl_to_glxattr(int attr)
